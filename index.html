@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<link rel="manifest" href="manifest.json">
+<title>Coupon Scanner</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:#0f172a;color:#fff;font-family:system-ui,sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#1e293b}
+header b{font-size:18px}button{font:inherit;border:0;border-radius:10px;padding:10px 14px;background:#334155;color:#fff}
+#reader{width:100%;max-width:520px;margin:10px auto}
+.stats{display:flex;gap:8px;justify-content:center;padding:6px;font-weight:700}
+.stats span{padding:6px 12px;border-radius:8px}
+.s1{background:#16a34a}.s2{background:#dc2626}.s3{background:#d97706}
+.row{display:flex;gap:8px;padding:8px 14px;max-width:520px;margin:auto}
+.row input{flex:1;padding:12px;border-radius:10px;border:0;font-size:16px}
+#log{max-width:520px;margin:auto;padding:0 14px 30px;font-size:14px}
+#log div{padding:6px 8px;border-bottom:1px solid #334155;display:flex;justify-content:space-between}
+#ov{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px;z-index:9}
+#ov h1{font-size:12vw;margin:0;line-height:1.1}#ov p{font-size:5vw;margin:14px 0 0}
+#ov.ok{background:#16a34a}#ov.used{background:#dc2626}#ov.bad{background:#d97706}#ov.err{background:#475569}
+#set{position:fixed;inset:0;background:#0f172a;display:none;padding:20px;z-index:8}
+#set input{width:100%;padding:12px;margin:6px 0 14px;border-radius:10px;border:0;font-size:16px}
+</style></head><body>
+<header><b>Coupon Scanner</b><span><button id="torch">🔦</button> <button id="gear">⚙</button></span></header>
+<div class="stats"><span class="s1" id="c1">Good 0</span><span class="s2" id="c2">Used 0</span><span class="s3" id="c3">Invalid 0</span></div>
+<div id="reader"></div>
+<div class="row"><input id="man" placeholder="Type coupon code manually"><button id="go">Check</button></div>
+<div id="log"></div>
+<div id="ov"><h1 id="t"></h1><p id="s"></p></div>
+<div id="set">
+ <h2>Settings</h2>
+ Apps Script Web App URL<input id="url" placeholder="https://script.google.com/macros/s/.../exec">
+ Secret Key<input id="key">
+ Scanner / Gate Name<input id="user" placeholder="e.g. Gate-1">
+ <button id="save">Save & Start</button>
+</div>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+const $=id=>document.getElementById(id), enc=encodeURIComponent;
+let cfg={};try{cfg=JSON.parse(localStorage.getItem('cfg')||'{}')}catch(e){}
+let busy=false,last={c:'',t:0},n={ok:0,used:0,bad:0},qr,torchOn=false;
+const TXT={
+ OK:{cls:'ok',t:'Good to Go',vib:[120]},
+ USED:{cls:'used',t:'X Coupon Already Used X',vib:[300,100,300]},
+ INVALID:{cls:'bad',t:'Invalid Coupon',vib:[500]},
+ DENIED:{cls:'err',t:'Wrong Secret Key',vib:[500]},
+ ERROR:{cls:'err',t:'Network Error - Scan Again',vib:[500]}};
+function beep(f,d){try{const a=new (window.AudioContext||webkitAudioContext)(),o=a.createOscillator();o.frequency.value=f;o.connect(a.destination);o.start();setTimeout(()=>o.stop(),d)}catch(e){}}
+async function check(code){
+  if(busy)return;const now=Date.now();
+  if(code===last.c&&now-last.t<4000)return;last={c:code,t:now};busy=true;
+  let j;
+  try{
+    const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),20000);
+    const r=await fetch(cfg.url+'?action=verify&key='+enc(cfg.key)+'&user='+enc(cfg.user||'')+'&code='+enc(code),{signal:ctl.signal});
+    clearTimeout(tm);j=await r.json();
+  }catch(e){j={status:'ERROR'}}
+  show(j,code);
+}
+function show(j,code){
+  const m=TXT[j.status]||TXT.ERROR;
+  $('ov').className=m.cls;$('ov').style.display='flex';$('t').textContent=m.t;
+  let sub=code;if(j.status==='USED')sub+='\nUsed: '+(j.at||'')+(j.by?' by '+j.by:'');
+  if(j.status==='OK'&&j.info)sub+='\n'+j.info;
+  $('s').style.whiteSpace='pre-line';$('s').textContent=sub;
+  if(navigator.vibrate)navigator.vibrate(m.vib);
+  beep(j.status==='OK'?880:300,j.status==='OK'?150:500);
+  if(j.status==='OK')n.ok++;else if(j.status==='USED')n.used++;else if(j.status==='INVALID')n.bad++;
+  $('c1').textContent='Good '+n.ok;$('c2').textContent='Used '+n.used;$('c3').textContent='Invalid '+n.bad;
+  const d=document.createElement('div');d.innerHTML='<span></span><b></b>';
+  d.children[0].textContent=code;d.children[1].textContent=m.t;$('log').prepend(d);
+  const wait=j.status==='OK'?1200:2200;
+  clearTimeout(show.t);show.t=setTimeout(close,wait);
+}
+function close(){$('ov').style.display='none';busy=false}
+$('ov').onclick=()=>{clearTimeout(show.t);close()};
+$('go').onclick=()=>{const v=$('man').value.trim();if(v){$('man').value='';last={c:'',t:0};check(v)}};
+$('gear').onclick=()=>{$('url').value=cfg.url||'';$('key').value=cfg.key||'';$('user').value=cfg.user||'';$('set').style.display='block'};
+$('save').onclick=()=>{cfg={url:$('url').value.trim(),key:$('key').value.trim(),user:$('user').value.trim()};
+  localStorage.setItem('cfg',JSON.stringify(cfg));$('set').style.display='none';startCam()};
+$('torch').onclick=async()=>{try{torchOn=!torchOn;await qr.applyVideoConstraints({advanced:[{torch:torchOn}]})}catch(e){alert('Torch not supported')}};
+function startCam(){
+  if(!cfg.url){$('gear').click();return}
+  if(!qr)qr=new Html5Qrcode('reader',{formatsToSupport:[Html5QrcodeSupportedFormats.QR_CODE],useBarCodeDetectorIfSupported:true});
+  if(qr.isScanning)return;
+  qr.start({facingMode:'environment'},{fps:15,qrbox:(w,h)=>{const s=Math.floor(Math.min(w,h)*.75);return{width:s,height:s}}},t=>check(t.trim()),()=>{})
+   .catch(e=>alert('Camera error: '+e));
+}
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');
+startCam();
+</script></body></html>
